@@ -1,3 +1,4 @@
+package test;
 import com.c1games.terminal.algo.Config;
 import com.c1games.terminal.algo.FrameData;
 import com.c1games.terminal.algo.map.SpawnCommand;
