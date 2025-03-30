@@ -38,18 +38,25 @@ class GameMap:
         self.__map = self.__empty_grid()
         self.__start = [13,0]
     
+    # Allows map access using game_map[x, y] syntax. Returns a list of units at that location
+    # or empty list if there are no units at that location. Validated to ensure that the location
+    # is in the map
     def __getitem__(self, location):
         if len(location) == 2 and self.in_arena_bounds(location):
             x,y = location
             return self.__map[x][y]
         self._invalid_coordinates(location)
 
+    # Allows setting of map using game_map[x, y = val syntax. 
+    # Validates that coordinates are in the map
     def __setitem__(self, location, val):
         if type(location) == tuple and len(location) == 2 and self.in_arena_bounds(location):
             self.__map[location[0]][location[1]] = val
             return
         self._invalid_coordinates(location)
 
+    # Loops through all valid map locations. __iter__ sets the starting position and
+    # __next__ iterates through all posiitons until the end of the map is reached
     def __iter__(self):
         self.__start = [13,0]
         return self
@@ -66,7 +73,10 @@ class GameMap:
                 new_location = [new_location[0]+1, new_location[1]]
         self.__start = new_location
         return location 
+    
 
+    # Creates a 2D 28x28 list where each cell is an empty list
+    # Used to initialize the map
     def __empty_grid(self):
         grid = []
         for x in range(0, self.ARENA_SIZE):
@@ -75,6 +85,7 @@ class GameMap:
                 grid[x].append([])
         return grid
 
+    # Private helper method to handle invalid coordinate warnings
     def _invalid_coordinates(self, location):
         self.warn("{} is out of bounds.".format(str(location)))
 

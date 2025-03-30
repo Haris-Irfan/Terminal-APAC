@@ -66,6 +66,37 @@ class AlgoStrategy(gamelib.AlgoCore):
     strategy and can safely be replaced for your custom algo.
     """
 
+    def maxValue(alpha, beta, gameState):
+        if (gameState.game_over()):
+            return gameState.utility()
+        v = -math.inf
+        for action in gameState.actions():
+            v = max(v, minValue(alpha, beta, gameState.result(action)))
+            if (v >= beta):
+                return v
+            alpha = max(alpha, v)
+        return v
+    
+    def minValue(alpha, beta, gameState):
+        if (gameState.game_over()):
+            return gameState.utility()
+        v = math.inf
+        for action in gameState.actions():
+            v = min(v, maxValue(alpha, beta, gameState.result(action)))
+            if (v <= alpha):
+                return v
+            beta = min(beta, v)
+        return v
+        
+    # Current minimax without taking into account simulataneous moves
+    def minimax(alpha, beta,  currPlayer, gameState):
+        if (currPlayer == 0):
+            return maxValue(alpha, beta, gameState)
+        else:
+            return minValue(alpha, beta, gameState)
+        
+
+
     def starter_strategy(self, game_state):
         """
         For defense we will use a spread out layout and some interceptors early on.
@@ -99,9 +130,11 @@ class AlgoStrategy(gamelib.AlgoCore):
 
                 # Lastly, if we have spare SP, let's build some supports
                 support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]
-                game_state.attempt_spawn(SUPPORT, support_locations)
+                game_state.attempt_spawn(SUPPORT, support_locations)        
+
 
     def build_defences(self, game_state):
+
         """
         Build basic defenses using hardcoded locations.
         Remember to defend corners and avoid placing units in the front where enemy demolishers can attack them.
