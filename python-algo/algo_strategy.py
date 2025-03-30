@@ -53,6 +53,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
+        game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
         gamelib.debug_write('Performing turn {} of your custom algo strategy'.format(game_state.turn_number))
         game_state.suppress_warnings(True)  #Comment or remove this line to enable warnings.
 
@@ -80,29 +81,104 @@ class AlgoStrategy(gamelib.AlgoCore):
         # Now update the defence based on points
         self.update_defence(game_state)
 
-        # If the turn is less than 5, stall with interceptors and wait to see enemy's base
-        if game_state.turn_number < 5:
-            self.stall_with_interceptors(game_state)
+
+    def build_defences(self, game_state):
+        """
+        Build basic defenses using hardcoded locations.
+        Remember to defend corners and avoid placing units in the front where enemy demolishers can attack them.
+        """
+        # Useful tool for setting up your base locations: https://www.kevinbai.design/terminal-map-maker
+        # More community tools available at: https://terminal.c1games.com/rules#Download
+
+        # Place turrets that attack enemy units
+        turret_locations = [[11, 11], [16, 11]]
+        # attempt_spawn will try to spawn units if we have resources, and will check if a blocking unit is already there
+        game_state.attempt_spawn(TURRET, turret_locations)
+        
+        # Place walls in front of turrets to soak up damage for them
+        wall_locations = [[5, 13], [6, 13], [7, 13], [8, 13], [9, 13], [18, 13], [19, 13], [20, 13], [21, 13], [22, 13]]
+        game_state.attempt_spawn(WALL, wall_locations)
+
+        # Place supports to heal our turrets and walls
+        leftEnemyDefences = game_state.analyze_enemy_defences([1,11])
+        rightEnemyDefences = game_state.analyze_enemy_defences([22, 11])
+
+        # Default to placing support on left side if analysis fails
+        if leftEnemyDefences is None or rightEnemyDefences is None:
+            support_location = [[3, 11]] 
+        elif leftEnemyDefences['TOTAL'] < rightEnemyDefences['TOTAL']:
+            support_location = [[3, 11]]
         else:
-            # Now let's analyze the enemy base to see where their defenses are concentrated.
-            # If they have many units in the front we can build a line for our demolishers to attack them at long range.
-            if self.detect_enemy_unit(game_state, unit_type=None, valid_x=None, valid_y=[14, 15]) > 10:
-                self.demolisher_line_strategy(game_state)
+            support_location = [[24, 11]]
+
+        game_state.attempt_spawn(WALL, support_location)
+
+
+    def build_reactive_defense(self, game_state):
+        """
+        This function builds reactive defenses based on where the enemy scored on us from.
+        We can track where the opponent scored by looking at events in action frames 
+        as shown in the on_action_frame function
+        """
+        for location in self.scored_on_locations:
+            # Build turret one space above so that it doesn't block our own edge spawn locations
+            build_location = [location[0] + 2, location[1] + 2]
+            game_state.attempt_spawn(TURRET, build_location)
+
+    def update_defence(self, game_state):
+        structPoints = game_state.get_resource(0)
+        # Update_defence based on points
+        if (structPoints  <  12):
+            if (game_state.can_spawn(TURRET, [12, 11])):
+                game_state.attempt_spawn(TURRET, [12, 11])
+            if (game_state.can_spawn(TURRET, [15, 11])):
+                game_state.attempt_spawn(TURRET, [12, 11])
+            if (game_state.can_spawn(TURRET, [5, 11])):
+                game_state.attempt_spawn(TURRET, [5, 11])
+            if (game_state.can_spawn(TURRET, [22, 11])):
+                game_state.attempt_spawn(TURRET, [22, 11])
+            for i in range(1, 10):
+                if (game_state.can_spawn(WALL, [i, 13])):
+                    game_state.attempt_spawn(WALL, [i, 13])
+            for i in range(17, 27):
+                if (game_state.can_spawn(WALL, [i, 13])):
+                    game_state.attempt_spawn(WALL, [i, 13])
+            for i in range(1, 4):
+                if (game_state.can_spawn(SUPPORT, [i, 12])):
+                    game_state.attempt_spawn(SUPPORT, [i, 12])
+            for i in range(24, 27):
+                if (game_state.can_spawn(SUPPORT, [i, 12])):
+                    game_state.attempt_spawn(SUPPORT, [i, 12])
+        else:
+            if (game_state.can_spawn(TURRET, [12, 11])):
+                game_state.attempt_spawn(TURRET, [12, 11])
             else:
-                # They don't have many units in the front so lets figure out their least defended area and send Scouts there.
-
-                # Only spawn Scouts every other turn
-                # Sending more at once is better since attacks can only hit a single scout at a time
-                if game_state.turn_number % 2 == 1:
-                    # To simplify we will just check sending them from back left and right
-                    scout_spawn_location_options = [[13, 0], [14, 0]]
-                    best_location = self.least_damage_spawn_location(game_state, scout_spawn_location_options)
-                    game_state.attempt_spawn(SCOUT, best_location, 1000)
-
-                # Lastly, if we have spare SP, let's build some supports
-                support_locations = [[13, 2], [14, 2], [13, 3], [14, 3]]
-                game_state.attempt_spawn(SUPPORT, support_locations)        
-
+                game_state.attempt_upgrade([12, 11])
+            if (game_state.can_spawn(TURRET, [15, 11])):
+                game_state.attempt_spawn(TURRET, [15, 11])
+            else:
+                game_state.attempt_upgrade([15, 11]) 
+            if (game_state.can_spawn(TURRET, [5, 11])):
+                game_state.attempt_spawn(TURRET, [5, 11])
+            else:
+                game_state.attempt_upgrade([5, 11])
+            if (game_state.can_spawn(TURRET, [22, 11])):
+                game_state.attempt_spawn(TURRET, [22, 11])
+            else:
+                game_state.attempt_upgrade([22, 11])                                      
+            for i in range(1, 10):
+                if (game_state.can_spawn(WALL, [i, 13])):
+                    game_state.attempt_spawn(WALL, [i, 13])
+            for i in range(17, 27):
+                if (game_state.can_spawn(WALL, [i, 13])):
+                    game_state.attempt_spawn(WALL, [i, 13])
+            for i in range(1, 4):
+                if (game_state.can_spawn(SUPPORT, [i, 12])):
+                    game_state.attempt_spawn(SUPPORT, [i, 12])
+            for i in range(24, 27):
+                if (game_state.can_spawn(SUPPORT, [i, 12])):
+                    game_state.attempt_spawn(SUPPORT, [i, 12])
+    
     def on_action_frame(self, turn_string):
         """
         This is the action frame of the game. This function could be called 
@@ -128,85 +204,3 @@ class AlgoStrategy(gamelib.AlgoCore):
 if __name__ == "__main__":
     algo = AlgoStrategy()
     algo.start()
-
-
-
-    class Defence: 
-        def build_defences(self, game_state):
-            """
-            Build basic defenses using hardcoded locations.
-            Remember to defend corners and avoid placing units in the front where enemy demolishers can attack them.
-            """
-            # Useful tool for setting up your base locations: https://www.kevinbai.design/terminal-map-maker
-            # More community tools available at: https://terminal.c1games.com/rules#Download
-
-            # Place turrets that attack enemy units
-            turret_locations = [[11, 11], [16, 11]]
-            # attempt_spawn will try to spawn units if we have resources, and will check if a blocking unit is already there
-            game_state.attempt_spawn(TURRET, turret_locations)
-            
-            # Place walls in front of turrets to soak up damage for them
-            wall_locations = [[5, 13], [6, 13], [7, 13], [8, 13], [9, 13], [18, 13], [19, 13] [20, 13], [21, 13], [22, 13]]
-            game_state.attempt_spawn(WALL, wall_locations)
-
-            # Place supports to heal our turrets and walls
-            if (game_state.analyze_enemy_defences([1,11]) < game_state.analyze_enemy_defences([22, 11])):
-                support_location = [[3, 11]] 
-            else:
-                support_location = [[24, 11]]
-
-            game_state.attempt_spawn(SUPPORT, support_location)    
-
-        def build_reactive_defense(self, game_state):
-            """
-            This function builds reactive defenses based on where the enemy scored on us from.
-            We can track where the opponent scored by looking at events in action frames 
-            as shown in the on_action_frame function
-            """
-            for location in self.scored_on_locations:
-                # Build turret one space above so that it doesn't block our own edge spawn locations
-                build_location = [location[0] + 2, location[1] + 2]
-                game_state.attempt_spawn(TURRET, build_location)
-
-        def update_defence(self, game_state):
-            structPoints = game_state.get_resources(0)
-            # Update_defence based on points
-            if (structPoints  <  12):
-                if (game_state.can_spawn(TURRET, [12, 11])):
-                    game_state.attempt_spawn(TURRET, [12, 11])
-                if (game_state.can_spawn(TURRET, [15, 11])):
-                    game_state.attempt_spawn(TURRET, [12, 11])
-                for i in range(1, 10):
-                    if (game_state.can_spawn(WALL, [i, 13])):
-                        game_state.attempt_spawn(WALL, [i, 13])
-                for i in range(17, 27):
-                    if (game_state.can_spawn(WALL, [i, 13])):
-                        game_state.attempt_spawn(WALL, [i, 13])
-                for i in range(1, 4):
-                    if (game_state.can_spawn(SUPPORT, [i, 12])):
-                        game_state.attempt_spawn(SUPPORT, [i, 13])
-                for i in range(24, 27):
-                    if (game_state.can_spawn(SUPPORT, [i, 12])):
-                        game_state.attempt_spawn(SUPPORT, [i, 13])
-            else:
-                if (game_state.can_spawn(TURRET, [12, 11])):
-                    game_state.attempt_spawn(TURRET, [12, 11])
-                else:
-                    game_state.attempt_upgrade(TURRET, [12, 11])
-                if (game_state.can_spawn(TURRET, [15, 11])):
-                    game_state.attempt_spawn(TURRET, [15, 11])
-                else:
-                    game_state.attempt_upgrade(TURRET, [15, 11])                                   
-                for i in range(1, 10):
-                    if (game_state.can_spawn(WALL, [i, 13])):
-                        game_state.attempt_spawn(WALL, [i, 13])
-                for i in range(17, 27):
-                    if (game_state.can_spawn(WALL, [i, 13])):
-                        game_state.attempt_spawn(WALL, [i, 13])
-                for i in range(1, 4):
-                    if (game_state.can_spawn(SUPPORT, [i, 12])):
-                        game_state.attempt_spawn(SUPPORT, [i, 13])
-                for i in range(24, 27):
-                    if (game_state.can_spawn(SUPPORT, [i, 12])):
-                        game_state.attempt_spawn(SUPPORT, [i, 13])
-                
