@@ -24,7 +24,27 @@ class AlgoStrategy(gamelib.AlgoCore):
         super().__init__()
         seed = random.randrange(maxsize)
         random.seed(seed)
-        gamelib.debug_write('Random seed: {}'.format(seed))
+        gamelib.debug_write('Random seed: {}'.format(seed))\
+        # Evaluation function weights (dynamic adjustment)
+        self.weights = {
+            'health_diff': 10.0,     # Primary focus (increased for this ruleset)
+            'unit_advantage': 2.0,
+            'map_control': 1.5,
+            'resource_diff': 0.8,
+            'burst_potential': 3.5,
+            'enemy_econ': -3.0       # Strong penalty for enemy stockpiling
+        }
+        # Unit-specific parameters for this ruleset
+        self.unit_values = {
+            'SCOUT': 0.8,      # Less valuable than standard rules
+            'DEMOLISHER': 2.5,  # More valuable due to higher cost
+            'INTERCEPTOR': 3.0, # Much more valuable now
+        }
+        # Strategy tracking
+        self.last_offensive_action = None
+        self.offensive_push_strength = 1.0
+        self.scout_spawn_timer = 0
+        self.game_phase = "early"  
 
     def on_game_start(self, config):
         """ 
@@ -42,7 +62,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         MP = 1
         SP = 0
         # This is a good place to do initial setup
-        self.scored_on_locations = []
+        self.optimal_paths = {
+            'scout_left': [[13, 0], [13, 1], [12, 1], [12, 2], [11, 2]],
+            'scout_right': [[14, 0], [14, 1], [15, 1], [15, 2], [16, 2]],
+            'demolisher': [[24, 10], [24, 11], [23, 11], [23, 12]]
+        }
 
     def on_turn(self, turn_state):
         """
@@ -55,47 +79,199 @@ class AlgoStrategy(gamelib.AlgoCore):
         game_state = gamelib.GameState(self.config, turn_state)
         gamelib.debug_write('Performing turn {} of your custom algo strategy'.format(game_state.turn_number))
         game_state.suppress_warnings(True)  #Comment or remove this line to enable warnings.
-
+        # Update game phase
+        self.update_game_phase(game_state)
+        # Dynamic weight adjustment
+        self.adjust_weights_for_phase(game_state)
+        # Generate and evaluate possible actions
+        best_action = self.find_best_action(game_state)
+        # Execute the best action
+        self.execute_action(game_state, best_action)
+        # Haris actions
         self.starter_strategy(game_state)
-
         game_state.submit_turn()
-
 
     """
     NOTE: All the methods after this point are part of the sample starter-algo
     strategy and can safely be replaced for your custom algo.
     """
-
-    def maxValue(alpha, beta, gameState):
-        if (gameState.game_over()):
-            return gameState.utility()
-        v = -math.inf
-        for action in gameState.actions():
-            v = max(v, minValue(alpha, beta, gameState.result(action)))
-            if (v >= beta):
-                return v
-            alpha = max(alpha, v)
-        return v
     
-    def minValue(alpha, beta, gameState):
-        if (gameState.game_over()):
-            return gameState.utility()
-        v = math.inf
-        for action in gameState.actions():
-            v = min(v, maxValue(alpha, beta, gameState.result(action)))
-            if (v <= alpha):
-                return v
-            beta = min(beta, v)
-        return v
-        
-    # Current minimax without taking into account simulataneous moves
-    def minimax(alpha, beta,  currPlayer, gameState):
-        if (currPlayer == 0):
-            return maxValue(alpha, beta, gameState)
+    def update_game_phase(self, game_state):
+        """Determine current game phase based on turn and game state"""
+        turn = game_state.turn_number
+        if turn < 10:
+            self.game_phase = "early"
+        elif turn < 25:
+            self.game_phase = "mid"
         else:
-            return minValue(alpha, beta, gameState)
-        
+            self.game_phase = "late"
 
+    def adjust_weights_for_phase(self, game_state):
+        """Dynamic weight adjustment based on game phase"""
+        if self.game_phase == "early":
+            self.weights.update({
+                'health_diff': 8.0,
+                'burst_potential': 4.0,
+                'enemy_econ': -2.0
+            })
+            self.offensive_push_strength = 1.2
+        elif self.game_phase == "mid":
+            self.weights.update({
+                'health_diff': 10.0,
+                'unit_advantage': 2.5,
+                'map_control': 1.5
+            })
+            self.offensive_push_strength = 1.0
+            
+        else:  # late game
+            self.weights.update({
+                'health_diff': 12.0,
+                'burst_potential': 5.0,
+                'enemy_econ': -4.0
+            })
+            self.offensive_push_strength = 1.5
+
+    def evaluate_state(self, game_state):
+        """
+        Comprehensive state evaluation for offensive play
+        """
+        score = 0
+        # Health difference (most important)
+        health_diff = game_state.my_health - game_state.enemy_health
+        score += self.weights['health_diff'] * health_diff
+        # Unit advantage calculation with ruleset-specific values
+        unit_diff = self.calculate_unit_advantage(game_state)
+        score += self.weights['unit_advantage'] * unit_diff
+        # Map control evaluation
+        map_control = self.calculate_map_control(game_state)
+        score += self.weights['map_control'] * map_control
+        # Resource difference
+        resource_diff = (game_state.get_resource(MP) - game_state.get_resource(MP, 1)) / 10
+        score += self.weights['resource_diff'] * resource_diff
+        # Burst damage potential
+        burst_potential = self.calculate_burst_potential(game_state)
+        score += self.weights['burst_potential'] * burst_potential
+        # Enemy economy penalty
+        enemy_resources = game_state.get_resource(MP, 1) + game_state.get_resource(SP, 1)
+        score += self.weights['enemy_econ'] * (enemy_resources / 5)
+        return score
+
+    def generate_offensive_actions(self, game_state):
+        """
+        Generate possible offensive moves
+        """
+        actions = []
+        mp = game_state.get_resource(MP)
+        # Scout rush option
+        if mp >= 2 and self.game_phase != "late":
+            actions.append({
+                'type': 'scout_rush',
+                'locations': [[13, 0], [14, 0]],
+                'count': min(int(mp), 8),
+                'priority': 2
+            })
+        # Demolisher push option
+        if mp >= 5:
+            actions.append({
+                'type': 'demolisher_push',
+                'locations': [[24, 10]],
+                'count': min(int(mp/5), 2),
+                'priority': 3
+            }) 
+        # Interceptor tank push 
+        if mp >= 4:
+            actions.append({
+                'type': 'interceptor_push',
+                'locations': [[13, 0], [14, 0]],
+                'count': min(int(mp/2), 4),
+                'follow_up': 'scouts' if mp >= 6 else None,
+                'priority': 4
+            })
+        # Mixed attack option
+        if mp >= 8 and self.game_phase == "mid":
+            actions.append({
+                'type': 'mixed_attack',
+                'interceptors': [[13, 0], [14, 0]],
+                'demolishers': [[24, 10]],
+                'interceptor_count': min(int(mp*0.4/2), 2),
+                'demolisher_count': min(int(mp*0.6/5), 1)
+            })   
+        return actions
+    
+    def execute_offensive_action(self, game_state, action):
+        """Execute offensive actions"""
+        if action['type'] == 'scout_rush':
+            count = int(action['count'] * self.offensive_push_strength)
+            game_state.attempt_spawn(SCOUT, action['locations'], count)     
+        elif action['type'] == 'demolisher_push':
+            count = int(action['count'] * self.offensive_push_strength)
+            game_state.attempt_spawn(DEMOLISHER, action['locations'], count)     
+        elif action['type'] == 'interceptor_push':
+            count = int(action['count'] * self.offensive_push_strength)
+            game_state.attempt_spawn(INTERCEPTOR, action['locations'], count)
+            if action['follow_up']:
+                game_state.attempt_spawn(SCOUT, action['locations'], 3)
+
+    def generate_actions(self, game_state):
+        """Generate combined offensive and defensive actions"""
+        actions = []
+        offensive_actions = self.generate_offensive_actions(game_state)
+        # Create joint actions
+        for off_action in offensive_actions[:3]:  # Limit offensive options
+            actions.append({
+                'offensive': off_action,
+                'priority': off_action.get('priority', 0)
+            })     
+        return sorted(actions, key=lambda x: -x['priority'])[:self.max_breadth]
+
+    def execute_action(self, game_state, action):
+        """Execute the selected action"""
+        if 'offensive' in action:
+            self.execute_offensive_action(game_state, action['offensive'])
+      
+    def calculate_unit_advantage(self, game_state):
+        """
+        Calculate offensive unit advantage with type weighting
+        """
+        advantage = 0
+        # Count all units on the field with type weighting
+        for location in game_state.game_map:
+            for unit in game_state.game_map[location]:
+                if unit.player_index == 0:  # My units
+                    advantage += self.unit_values.get(unit.unit_type, 0)
+                else:  # Enemy units
+                    advantage -= self.unit_values.get(unit.unit_type, 0)
+        return advantage
+
+    def calculate_map_control(self, game_state):
+        """
+        Measure territory advancement
+        """
+        total_advance = 0
+        unit_count = 0
+        for location in game_state.game_map:
+            for unit in game_state.game_map[location]:
+                if unit.player_index == 0 and unit.unit_type in [SCOUT, DEMOLISHER, INTERCEPTOR]:
+                    total_advance += location[1] / 27
+                    unit_count += 1
+        return total_advance / max(1, unit_count)
+
+    def calculate_burst_potential(self, game_state):
+        """
+        Estimate immediate damage potential
+        """
+        potential = 0
+        for location in game_state.game_map:
+            for unit in game_state.game_map[location]:
+                if unit.player_index == 0:
+                    if unit.unit_type == SCOUT:
+                        potential += 1
+                    elif unit.unit_type == DEMOLISHER:
+                        potential += 4  
+                    elif unit.unit_type == INTERCEPTOR:
+                        potential += 2 
+                    potential += (27 - location[1]) * 0.15      
+        return potential
 
     def starter_strategy(self, game_state):
         """
@@ -166,70 +342,6 @@ class AlgoStrategy(gamelib.AlgoCore):
             build_location = [location[0], location[1]+1]
             game_state.attempt_spawn(TURRET, build_location)
 
-    def stall_with_interceptors(self, game_state):
-        """
-        Send out interceptors at random locations to defend our base from enemy moving units.
-        """
-        # We can spawn moving units on our edges so a list of all our edge locations
-        friendly_edges = game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_LEFT) + game_state.game_map.get_edge_locations(game_state.game_map.BOTTOM_RIGHT)
-        
-        # Remove locations that are blocked by our own structures 
-        # since we can't deploy units there.
-        deploy_locations = self.filter_blocked_locations(friendly_edges, game_state)
-        
-        # While we have remaining MP to spend lets send out interceptors randomly.
-        while game_state.get_resource(MP) >= game_state.type_cost(INTERCEPTOR)[MP] and len(deploy_locations) > 0:
-            # Choose a random deploy location.
-            deploy_index = random.randint(0, len(deploy_locations) - 1)
-            deploy_location = deploy_locations[deploy_index]
-            
-            game_state.attempt_spawn(INTERCEPTOR, deploy_location)
-            """
-            We don't have to remove the location since multiple mobile 
-            units can occupy the same space.
-            """
-
-    def demolisher_line_strategy(self, game_state):
-        """
-        Build a line of the cheapest stationary unit so our demolisher can attack from long range.
-        """
-        # First let's figure out the cheapest unit
-        # We could just check the game rules, but this demonstrates how to use the GameUnit class
-        stationary_units = [WALL, TURRET, SUPPORT]
-        cheapest_unit = WALL
-        for unit in stationary_units:
-            unit_class = gamelib.GameUnit(unit, game_state.config)
-            if unit_class.cost[game_state.MP] < gamelib.GameUnit(cheapest_unit, game_state.config).cost[game_state.MP]:
-                cheapest_unit = unit
-
-        # Now let's build out a line of stationary units. This will prevent our demolisher from running into the enemy base.
-        # Instead they will stay at the perfect distance to attack the front two rows of the enemy base.
-        for x in range(27, 5, -1):
-            game_state.attempt_spawn(cheapest_unit, [x, 11])
-
-        # Now spawn demolishers next to the line
-        # By asking attempt_spawn to spawn 1000 units, it will essentially spawn as many as we have resources for
-        game_state.attempt_spawn(DEMOLISHER, [24, 10], 1000)
-
-    def least_damage_spawn_location(self, game_state, location_options):
-        """
-        This function will help us guess which location is the safest to spawn moving units from.
-        It gets the path the unit will take then checks locations on that path to 
-        estimate the path's damage risk.
-        """
-        damages = []
-        # Get the damage estimate each path will take
-        for location in location_options:
-            path = game_state.find_path_to_edge(location)
-            damage = 0
-            for path_location in path:
-                # Get number of enemy turrets that can attack each location and multiply by turret damage
-                damage += len(game_state.get_attackers(path_location, 0)) * gamelib.GameUnit(TURRET, game_state.config).damage_i
-            damages.append(damage)
-        
-        # Now just return the location that takes the least damage
-        return location_options[damages.index(min(damages))]
-
     def detect_enemy_unit(self, game_state, unit_type=None, valid_x = None, valid_y = None):
         total_units = 0
         for location in game_state.game_map:
@@ -238,13 +350,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and (unit_type is None or unit.unit_type == unit_type) and (valid_x is None or location[0] in valid_x) and (valid_y is None or location[1] in valid_y):
                         total_units += 1
         return total_units
-        
-    def filter_blocked_locations(self, locations, game_state):
-        filtered = []
-        for location in locations:
-            if not game_state.contains_stationary_unit(location):
-                filtered.append(location)
-        return filtered
 
     def on_action_frame(self, turn_string):
         """
@@ -266,7 +371,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 gamelib.debug_write("Got scored on at: {}".format(location))
                 self.scored_on_locations.append(location)
                 gamelib.debug_write("All locations: {}".format(self.scored_on_locations))
-
 
 if __name__ == "__main__":
     algo = AlgoStrategy()
