@@ -76,6 +76,8 @@ class AlgoStrategy(gamelib.AlgoCore):
         """
         # First, place basic defenses
         self.build_defences(game_state)
+        # Next, build offense
+        self.offensive_strategy(game_state)
         # Now build reactive defenses based on where the enemy scored and then update your defences
         self.build_reactive_defense(game_state)
         # Now update the defence based on points
@@ -99,19 +101,19 @@ class AlgoStrategy(gamelib.AlgoCore):
         wall_locations = [[5, 13], [6, 13], [7, 13], [8, 13], [9, 13], [18, 13], [19, 13], [20, 13], [21, 13], [22, 13]]
         game_state.attempt_spawn(WALL, wall_locations)
 
-        # Place supports to heal our turrets and walls
-        leftEnemyDefences = game_state.analyze_enemy_defences([1,11])
-        rightEnemyDefences = game_state.analyze_enemy_defences([22, 11])
+        # # Place supports to heal our turrets and walls
+        # leftEnemyDefences = game_state.analyze_enemy_defences([1,11])
+        # rightEnemyDefences = game_state.analyze_enemy_defences([22, 11])
 
-        # Default to placing support on left side if analysis fails
-        if leftEnemyDefences is None or rightEnemyDefences is None:
-            support_location = [[3, 11]] 
-        elif leftEnemyDefences['TOTAL'] < rightEnemyDefences['TOTAL']:
-            support_location = [[3, 11]]
-        else:
-            support_location = [[24, 11]]
+        # # Default to placing support on left side if analysis fails
+        # if leftEnemyDefences is None or rightEnemyDefences is None:
+        #     support_location = [[3, 11]] 
+        # elif leftEnemyDefences['TOTAL'] < rightEnemyDefences['TOTAL']:
+        #     support_location = [[3, 11]]
+        # else:
+        #     support_location = [[24, 11]]
 
-        game_state.attempt_spawn(WALL, support_location)
+        game_state.attempt_spawn(SUPPORT, [[3, 11]])
 
 
     def build_reactive_defense(self, game_state):
@@ -200,7 +202,13 @@ class AlgoStrategy(gamelib.AlgoCore):
                 self.scored_on_locations.append(location)
                 gamelib.debug_write("All locations: {}".format(self.scored_on_locations))
 
+    def offensive_strategy(self, game_state):
+        interceptors = [[0, 13], [27, 13]]
+        game_state.attempt_spawn(INTERCEPTOR, interceptors)
+        scouts = [[6,7], [7, 6]]
+        game_state.attempt_spawn(SCOUT, scouts)
 
+    
 if __name__ == "__main__":
     algo = AlgoStrategy()
     algo.start()
