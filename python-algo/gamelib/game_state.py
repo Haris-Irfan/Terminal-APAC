@@ -645,3 +645,47 @@ class GameState:
                 if unit.damage_i + unit.damage_f > 0 and unit.player_index != player_index and self.game_map.distance_between_locations(location, location_unit) <= unit.attackRange:
                     attackers.append(unit)
         return attackers
+
+    def analyze_enemy_defences(self, start_coords, height=5):
+        """
+        Analyzes enemy defenses in a 5-column wide area starting from specified coordinates.
+        
+        Args:
+            start_coords: [x,y] - The starting coordinates (bottom-left corner of area to scan)
+            height: How many rows up from start_coords to scan (default 5)
+            
+        Returns:
+            A dictionary with counts of each defensive structure type in the area
+            Example: {'WALL': 3, 'TURRET': 2, 'SUPPORT': 1}
+        """
+        if not self.game_map.in_arena_bounds(start_coords):
+            self.warn(f"Starting coordinates {start_coords} are out of bounds")
+            return None
+        
+        defence_counts = {'WALL': 0, 'TURRET': 0, 'SUPPORT': 0, 'TOTAL': 0}
+        start_x, start_y = start_coords
+        
+        # Check if we're scanning enemy territory (top half of map)
+        if start_y < self.HALF_ARENA:
+            self.warn("Starting coordinates are in your own territory")
+            return defence_counts
+        
+        # Scan a 5-column wide area for specified height
+        for x in range(start_x, start_x + 5):
+            for y in range(start_y, start_y - height, -1):
+                if not self.game_map.in_arena_bounds([x, y]):
+                    continue
+                    
+                unit = self.contains_stationary_unit([x, y])
+                if unit and unit.player_index == 1:  # Enemy unit
+                    if unit.unit_type == WALL:
+                        defence_counts['WALL'] += 1
+                        defence_counts['TOTAL'] += 1
+                    elif unit.unit_type == TURRET:
+                        defence_counts['TURRET'] += 1
+                        defence_counts['TOTAL'] += 1
+                    elif unit.unit_type == SUPPORT:
+                        defence_counts['SUPPORT'] += 1
+                        defence_counts['TOTAL'] += 1
+
+        return defence_counts

@@ -152,7 +152,11 @@ class AlgoStrategy(gamelib.AlgoCore):
         game_state.attempt_spawn(WALL, wall_locations)
 
         # Place supports to heal our turrets and walls
-        support_location = [[3, 11]] 
+        if (game_state.analyze_enemy_defences([1,11]) < game_state.analyze_enemy_defences([22, 11])):
+            support_location = [[3, 11]] 
+        else:
+            support_location = [[24, 11]]
+
         game_state.attempt_spawn(SUPPORT, support_location)    
 
     def build_reactive_defense(self, game_state):
