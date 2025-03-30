@@ -1,7 +1,8 @@
 import gamelib
 import random
 import math
-import warnings
+import time
+from copy import deepcopy
 from sys import maxsize
 import json
 
@@ -24,27 +25,25 @@ class AlgoStrategy(gamelib.AlgoCore):
         super().__init__()
         seed = random.randrange(maxsize)
         random.seed(seed)
-        gamelib.debug_write('Random seed: {}'.format(seed))\
-        # Evaluation function weights (dynamic adjustment)
+        gamelib.debug_write('Random seed: {}'.format(seed))
+        # offensive configurations
         self.weights = {
-            'health_diff': 10.0,     # Primary focus (increased for this ruleset)
+            'health_diff': 10.0,
             'unit_advantage': 2.0,
             'map_control': 1.5,
             'resource_diff': 0.8,
             'burst_potential': 3.5,
-            'enemy_econ': -3.0       # Strong penalty for enemy stockpiling
+            'enemy_econ': -3.0
         }
-        # Unit-specific parameters for this ruleset
         self.unit_values = {
-            'SCOUT': 0.8,      # Less valuable than standard rules
-            'DEMOLISHER': 2.5,  # More valuable due to higher cost
-            'INTERCEPTOR': 3.0, # Much more valuable now
+            'SCOUT': 0.8,
+            'DEMOLISHER': 2.5,
+            'INTERCEPTOR': 3.0,
         }
-        # Strategy tracking
         self.last_offensive_action = None
         self.offensive_push_strength = 1.0
-        self.scout_spawn_timer = 0
-        self.game_phase = "early"  
+        self.game_phase = "early"
+        self.optimal_paths = {}
 
     def on_game_start(self, config):
         """ 
@@ -61,7 +60,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         INTERCEPTOR = config["unitInformation"][5]["shorthand"]
         MP = 1
         SP = 0
-        # This is a good place to do initial setup
+        # initialize optimal paths
         self.optimal_paths = {
             'scout_left': [[13, 0], [13, 1], [12, 1], [12, 2], [11, 2]],
             'scout_right': [[14, 0], [14, 1], [15, 1], [15, 2], [16, 2]],
@@ -77,17 +76,17 @@ class AlgoStrategy(gamelib.AlgoCore):
         game engine.
         """
         game_state = gamelib.GameState(self.config, turn_state)
+        game_state.attempt_spawn(DEMOLISHER, [24, 10], 3)
         gamelib.debug_write('Performing turn {} of your custom algo strategy'.format(game_state.turn_number))
         game_state.suppress_warnings(True)  #Comment or remove this line to enable warnings.
-        # Update game phase
+        # update game phase and weights
         self.update_game_phase(game_state)
-        # Dynamic weight adjustment
         self.adjust_weights_for_phase(game_state)
-        # Generate and evaluate possible actions
-        best_action = self.find_best_action(game_state)
-        # Execute the best action
+        # generate and evaluate possible actions
+        best_action = self.hill_climbing_search(game_state)
+        # execute the best action
         self.execute_action(game_state, best_action)
-        # Haris actions
+        # haris actions
         self.starter_strategy(game_state)
         game_state.submit_turn()
 
@@ -97,7 +96,7 @@ class AlgoStrategy(gamelib.AlgoCore):
     """
     
     def update_game_phase(self, game_state):
-        """Determine current game phase based on turn and game state"""
+        """determine current game phase"""
         turn = game_state.turn_number
         if turn < 10:
             self.game_phase = "early"
@@ -107,7 +106,7 @@ class AlgoStrategy(gamelib.AlgoCore):
             self.game_phase = "late"
 
     def adjust_weights_for_phase(self, game_state):
-        """Dynamic weight adjustment based on game phase"""
+        """dynamic weight adjustment"""
         if self.game_phase == "early":
             self.weights.update({
                 'health_diff': 8.0,
@@ -122,7 +121,6 @@ class AlgoStrategy(gamelib.AlgoCore):
                 'map_control': 1.5
             })
             self.offensive_push_strength = 1.0
-            
         else:  # late game
             self.weights.update({
                 'health_diff': 12.0,
@@ -132,37 +130,33 @@ class AlgoStrategy(gamelib.AlgoCore):
             self.offensive_push_strength = 1.5
 
     def evaluate_state(self, game_state):
-        """
-        Comprehensive state evaluation for offensive play
-        """
+        """comprehensive state evaluation"""
         score = 0
-        # Health difference (most important)
+        # health difference (most important)
         health_diff = game_state.my_health - game_state.enemy_health
         score += self.weights['health_diff'] * health_diff
-        # Unit advantage calculation with ruleset-specific values
+        # unit advantage 
         unit_diff = self.calculate_unit_advantage(game_state)
         score += self.weights['unit_advantage'] * unit_diff
-        # Map control evaluation
+        # map control 
         map_control = self.calculate_map_control(game_state)
         score += self.weights['map_control'] * map_control
-        # Resource difference
+        # resource difference
         resource_diff = (game_state.get_resource(MP) - game_state.get_resource(MP, 1)) / 10
         score += self.weights['resource_diff'] * resource_diff
-        # Burst damage potential
+        # burst damage potential
         burst_potential = self.calculate_burst_potential(game_state)
         score += self.weights['burst_potential'] * burst_potential
-        # Enemy economy penalty
+        # enemy economy penalty
         enemy_resources = game_state.get_resource(MP, 1) + game_state.get_resource(SP, 1)
         score += self.weights['enemy_econ'] * (enemy_resources / 5)
         return score
 
     def generate_offensive_actions(self, game_state):
-        """
-        Generate possible offensive moves
-        """
+        """generate possible offensive moves"""
         actions = []
         mp = game_state.get_resource(MP)
-        # Scout rush option
+        # scout rush option
         if mp >= 2 and self.game_phase != "late":
             actions.append({
                 'type': 'scout_rush',
@@ -170,7 +164,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 'count': min(int(mp), 8),
                 'priority': 2
             })
-        # Demolisher push option
+        # demolisher push option
         if mp >= 5:
             actions.append({
                 'type': 'demolisher_push',
@@ -178,7 +172,7 @@ class AlgoStrategy(gamelib.AlgoCore):
                 'count': min(int(mp/5), 2),
                 'priority': 3
             }) 
-        # Interceptor tank push 
+        # interceptor tank push 
         if mp >= 4:
             actions.append({
                 'type': 'interceptor_push',
@@ -186,20 +180,11 @@ class AlgoStrategy(gamelib.AlgoCore):
                 'count': min(int(mp/2), 4),
                 'follow_up': 'scouts' if mp >= 6 else None,
                 'priority': 4
-            })
-        # Mixed attack option
-        if mp >= 8 and self.game_phase == "mid":
-            actions.append({
-                'type': 'mixed_attack',
-                'interceptors': [[13, 0], [14, 0]],
-                'demolishers': [[24, 10]],
-                'interceptor_count': min(int(mp*0.4/2), 2),
-                'demolisher_count': min(int(mp*0.6/5), 1)
-            })   
+            }) 
         return actions
     
     def execute_offensive_action(self, game_state, action):
-        """Execute offensive actions"""
+        """execute offensive actions"""
         if action['type'] == 'scout_rush':
             count = int(action['count'] * self.offensive_push_strength)
             game_state.attempt_spawn(SCOUT, action['locations'], count)     
@@ -212,12 +197,54 @@ class AlgoStrategy(gamelib.AlgoCore):
             if action['follow_up']:
                 game_state.attempt_spawn(SCOUT, action['locations'], 3)
 
+    def find_best_action(self, game_state):
+        """minimax search with alpha-beta pruning"""
+        start_time = time.time()
+        best_action = None
+        best_value = -math.inf
+        alpha = -math.inf
+        beta = math.inf
+        possible_actions = self.generate_actions(game_state)
+        for action in possible_actions:
+            if time.time() - start_time > self.time_limit:
+                break
+            new_state = self.simulate_action(game_state, action)
+            value = self.minimax_value(new_state, self.search_depth-1, False, alpha, beta)
+            if value > best_value:
+                best_value = value
+                best_action = action
+            alpha = max(alpha, best_value)
+        return best_action or possible_actions[0]
+
+    def minimax_value(self, game_state, depth, maximizing_player, alpha, beta):
+        """recursive minimax evaluation"""
+        if depth == 0 or game_state.game_over:
+            return self.evaluate_state(game_state)
+        if maximizing_player:
+            value = -math.inf
+            for action in self.generate_actions(game_state):
+                new_state = self.simulate_action(game_state, action)
+                value = max(value, self.minimax_value(new_state, depth-1, False, alpha, beta))
+                alpha = max(alpha, value)
+                if alpha >= beta:
+                    break
+            return value
+        else:
+            value = math.inf
+            for action in self.generate_opponent_actions(game_state):
+                new_state = self.simulate_action(game_state, action)
+                value = min(value, self.minimax_value(new_state, depth-1, True, alpha, beta))
+                beta = min(beta, value)
+                if alpha >= beta:
+                    break
+            return value
+
     def generate_actions(self, game_state):
-        """Generate combined offensive and defensive actions"""
+        """generate offensive actions"""
         actions = []
         offensive_actions = self.generate_offensive_actions(game_state)
-        # Create joint actions
-        for off_action in offensive_actions[:3]:  # Limit offensive options
+        # create actions
+        for off_action in offensive_actions[:3]:  
             actions.append({
                 'offensive': off_action,
                 'priority': off_action.get('priority', 0)
@@ -225,28 +252,23 @@ class AlgoStrategy(gamelib.AlgoCore):
         return sorted(actions, key=lambda x: -x['priority'])[:self.max_breadth]
 
     def execute_action(self, game_state, action):
-        """Execute the selected action"""
+        """execute selected action"""
         if 'offensive' in action:
             self.execute_offensive_action(game_state, action['offensive'])
       
     def calculate_unit_advantage(self, game_state):
-        """
-        Calculate offensive unit advantage with type weighting
-        """
+        """calculate unit advantage with type weighting"""
         advantage = 0
-        # Count all units on the field with type weighting
         for location in game_state.game_map:
             for unit in game_state.game_map[location]:
-                if unit.player_index == 0:  # My units
+                if unit.player_index == 0:  # my units
                     advantage += self.unit_values.get(unit.unit_type, 0)
-                else:  # Enemy units
+                else:  # enemy units
                     advantage -= self.unit_values.get(unit.unit_type, 0)
         return advantage
 
     def calculate_map_control(self, game_state):
-        """
-        Measure territory advancement
-        """
+        """measure territory advancement"""
         total_advance = 0
         unit_count = 0
         for location in game_state.game_map:
@@ -257,9 +279,7 @@ class AlgoStrategy(gamelib.AlgoCore):
         return total_advance / max(1, unit_count)
 
     def calculate_burst_potential(self, game_state):
-        """
-        Estimate immediate damage potential
-        """
+        """estimate immediate damage potential"""
         potential = 0
         for location in game_state.game_map:
             for unit in game_state.game_map[location]:
@@ -350,6 +370,22 @@ class AlgoStrategy(gamelib.AlgoCore):
                     if unit.player_index == 1 and (unit_type is None or unit.unit_type == unit_type) and (valid_x is None or location[0] in valid_x) and (valid_y is None or location[1] in valid_y):
                         total_units += 1
         return total_units
+
+    def simulate_action(self, game_state, action):
+        new_state = deepcopy(game_state)
+        if 'offensive' in action:
+            off_action = action['offensive']
+            if off_action['type'] == 'scout_rush':
+                new_state.attempt_spawn(SCOUT, off_action['locations'], off_action['count'])
+            elif off_action['type'] == 'demolisher_push':
+                new_state.attempt_spawn(DEMOLISHER, off_action['locations'], off_action['count'])
+            elif off_action['type'] == 'interceptor_push':
+                new_state.attempt_spawn(INTERCEPTOR, off_action['locations'], off_action['count'])
+                if off_action['follow_up']:
+                    new_state.attempt_spawn(SCOUT, off_action['locations'], 3)
+        self.simulate_action_phase(new_state)
+        
+        return new_state
 
     def on_action_frame(self, turn_string):
         """
